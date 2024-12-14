@@ -1,11 +1,10 @@
 use ndarray::array;
-use nn::{ActivationTypes, LossType, Sequential};
+use nn::{activation::ActivationTypes, loss::LossType, models::Sequential};
 
 pub mod nn;
 pub mod symbolic;
 #[test]
 fn test() {
-
     println!("=========================== With Optimizer ======================");
     let mut nn = Sequential::new();
 
@@ -41,7 +40,6 @@ fn test() {
     nn.add_layers(2, 5, Box::new(ActivationTypes::Tanh));
     nn.add_layers(5, 3, Box::new(ActivationTypes::Tanh));
     nn.add_layers(3, 1, Box::new(ActivationTypes::Sigmoid));
-
 
     let x = array![[0.0, 0.0, 1.0, 1.0], [0.0, 1.0, 0.0, 1.0]]; // Shape: (2, 4)
     let y = array![[0.0, 1.0, 1.0, 0.0]]; // Shape: (1, 4)
