@@ -3,7 +3,10 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use super::nodes::Matrix;
+use super::{
+    kernel::cuda_traits::{CudaVectorAdd, SupportedFloat},
+    nodes::Matrix,
+};
 
 pub type NodeId = u64;
 
@@ -14,7 +17,7 @@ pub struct NodeIdGenerator {
 impl NodeIdGenerator {
     pub fn new() -> Self {
         NodeIdGenerator {
-            current: AtomicU64::new(1), // Start IDs from 1
+            current: AtomicU64::new(1),
         }
     }
 
@@ -34,13 +37,12 @@ pub enum CacheKey {
 
 pub type MatrixResult<T> = Option<Matrix<T>>;
 
-// Cache Manager now also holds shape_cache
-pub struct CacheManager<T> {
+pub struct CacheManager<T: SupportedFloat + CudaVectorAdd> {
     value_cache: HashMap<CacheKey, Matrix<T>>,
     shape_cache: HashMap<NodeId, (usize, usize)>,
 }
 
-impl<T> CacheManager<T> {
+impl<T: SupportedFloat + CudaVectorAdd> CacheManager<T> {
     pub fn new() -> Self {
         CacheManager {
             value_cache: HashMap::new(),
@@ -64,7 +66,6 @@ impl<T> CacheManager<T> {
         self.shape_cache.insert(node_id, shape);
     }
 
-    /// Returns the number of cached value entries
     pub fn len(&self) -> usize {
         self.value_cache.len()
     }

@@ -1,5 +1,6 @@
 use std::{
     fmt::Debug,
+    marker::PhantomData,
     ops::{Add, Mul, Sub},
 };
 
@@ -8,23 +9,46 @@ use num_traits::Float;
 
 use super::{
     cache::{CacheKey, CacheManager, NodeId},
-    gpu_add, gpu_dot, gpu_elemental_mul, gpu_reshape, gpu_sub, NODE_ID_GENERATOR,
+    gpu_add, gpu_dot, gpu_elemental_mul, gpu_reshape,
+    kernel::cuda_traits::{CudaVectorAdd, SupportedFloat},
+    NODE_ID_GENERATOR,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Matrix<T> {
+pub struct Matrix<T>
+where
+    T: SupportedFloat + CudaVectorAdd,
+{
     pub data: Vec<T>,
     pub rows: usize,
     pub cols: usize,
+    _marker: PhantomData<T>,
 }
 
-impl<T> Matrix<T> {
+impl<T> Matrix<T>
+where
+    T: SupportedFloat + CudaVectorAdd,
+{
+    /// Creates a new Matrix. Asserts that data length matches rows * cols.
     pub fn new(data: Vec<T>, rows: usize, cols: usize) -> Self {
-        Matrix { data, rows, cols }
+        assert!(
+            data.len() == rows * cols,
+            "Data length does not match matrix dimensions"
+        );
+        Matrix {
+            data,
+            rows,
+            cols,
+            _marker: PhantomData,
+        }
     }
 }
+
 #[derive(Debug, Clone)]
-pub enum Nodes<T> {
+pub enum Nodes<T>
+where
+    T: SupportedFloat + CudaVectorAdd,
+{
     Base {
         id: NodeId,
         matrix: Matrix<T>,
@@ -58,7 +82,7 @@ pub enum Nodes<T> {
 
 impl<T> Nodes<T>
 where
-    T: Clone + Debug + Float,
+    T: Clone + Debug + Float + SupportedFloat + CudaVectorAdd<CType = T>,
 {
     // Constructor methods
     pub fn new_base(matrix: Matrix<T>) -> Self {
@@ -119,12 +143,10 @@ where
         Nodes::new_reshape(self, dims)
     }
 
-    /// Optimizes the AST by eliminating redundant computations using caching.
     pub fn optimize_ast(&self) -> Self {
         self.clone()
     }
 
-    /// Converts the node to a CacheKey based on its operation and operands.
     pub fn to_cache_key(&self) -> Option<CacheKey> {
         match self {
             Nodes::Add { left, right, .. } => Some(CacheKey::Add(left.get_id(), right.get_id())),
@@ -136,11 +158,10 @@ where
             Nodes::Reshape { node, dims, .. } => {
                 Some(CacheKey::Reshape(node.get_id(), dims.0, dims.1))
             }
-            Nodes::Base { .. } => None, // Base nodes don't correspond to operations
+            Nodes::Base { .. } => None,
         }
     }
 
-    /// Retrieves the NodeId of the node.
     pub fn get_id(&self) -> NodeId {
         match self {
             Nodes::Base { id, .. }
@@ -152,7 +173,6 @@ where
         }
     }
 
-    /// Evaluates the AST using the CacheManager and returns the resulting matrix.
     pub fn evaluate(&self, cache_manager: &mut CacheManager<T>) -> Option<Matrix<T>> {
         match self {
             Nodes::Base { matrix, .. } => Some(matrix.clone()),
@@ -177,8 +197,12 @@ where
                 }
 
                 let a = left.evaluate(cache_manager)?;
-                let b = right.evaluate(cache_manager)?;
-                let result = gpu_sub(&a, &b);
+                let mut b = right.evaluate(cache_manager)?;
+
+                b.data
+                    .iter_mut()
+                    .for_each(|d| *d = *d * T::from(-1.0).unwrap());
+                let result = gpu_add(&a, &b);
 
                 cache_manager.insert_value(cache_key, result.clone());
 
@@ -228,15 +252,11 @@ where
         }
     }
 
-    /// Retrieve the shape (rows, cols) of this node.
-    /// Uses caching in CacheManager to avoid repeated computation.
     pub fn get_shape(&self, cache_manager: &mut CacheManager<T>) -> Option<(usize, usize)> {
-        // If shape is already cached, return it
         if let Some(shape) = cache_manager.get_shape(self.get_id()) {
             return Some(*shape);
         }
 
-        // Compute shape based on node type
         let shape = match self {
             Nodes::Base { matrix, .. } => {
                 let rows = matrix.rows;
@@ -246,13 +266,12 @@ where
             Nodes::Add { left, right, .. }
             | Nodes::Sub { left, right, .. }
             | Nodes::ElementalMul { left, right, .. } => {
-                // For these operations, shapes must match
                 let (lrows, lcols) = left.get_shape(cache_manager)?;
                 let (rrows, rcols) = right.get_shape(cache_manager)?;
                 if lrows == rrows && lcols == rcols {
                     (lrows, lcols)
                 } else {
-                    return None; // shape mismatch
+                    return None;
                 }
             }
             Nodes::Dot { left, right, .. } => {
@@ -261,22 +280,18 @@ where
                 if lcols == rrows {
                     (lrows, rcols)
                 } else {
-                    return None; // dimension mismatch
+                    return None;
                 }
             }
-            Nodes::Reshape { dims, .. } => {
-                // For reshape, we trust that dims is correct.
-                *dims
-            }
+            Nodes::Reshape { dims, .. } => *dims,
         };
 
-        // Store in cache before returning
         cache_manager.insert_shape(self.get_id(), shape);
         Some(shape)
     }
 }
 
-impl<T: PartialEq> PartialEq for Nodes<T> {
+impl<T: PartialEq + SupportedFloat + CudaVectorAdd> PartialEq for Nodes<T> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Nodes::Base { matrix: a, .. }, Nodes::Base { matrix: b, .. }) => a == b,
@@ -347,7 +362,7 @@ impl<T: PartialEq> PartialEq for Nodes<T> {
 
 impl<T> Add for Nodes<T>
 where
-    T: Float + Debug,
+    T: Float + Debug + SupportedFloat + CudaVectorAdd<CType = T>,
 {
     type Output = Self;
     fn add(self, rhs: Self) -> Self::Output {
@@ -357,7 +372,7 @@ where
 
 impl<T> Sub for Nodes<T>
 where
-    T: Float + Debug,
+    T: Float + Debug + SupportedFloat + CudaVectorAdd<CType = T>,
 {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self::Output {
@@ -367,7 +382,7 @@ where
 
 impl<T> Mul for Nodes<T>
 where
-    T: Float + Debug,
+    T: Float + Debug + SupportedFloat + CudaVectorAdd<CType = T>,
 {
     type Output = Self;
     fn mul(self, rhs: Self) -> Self::Output {
@@ -375,11 +390,11 @@ where
     }
 }
 
-impl<T: Eq> Eq for Nodes<T> {}
+impl<T: Eq + SupportedFloat + CudaVectorAdd> Eq for Nodes<T> {}
 
 impl<T> From<Array2<T>> for Nodes<T>
 where
-    T: Clone + Debug + Float,
+    T: Clone + Debug + Float + SupportedFloat + CudaVectorAdd<CType = T>,
 {
     fn from(value: Array2<T>) -> Self {
         let arr: Vec<Vec<T>> = value.rows().into_iter().map(|row| row.to_vec()).collect();
@@ -387,7 +402,7 @@ where
     }
 }
 
-impl<T> From<Vec<Vec<T>>> for Matrix<T> {
+impl<T: SupportedFloat + CudaVectorAdd<CType = T>> From<Vec<Vec<T>>> for Matrix<T> {
     fn from(value: Vec<Vec<T>>) -> Self {
         let rows = value.len();
         let cols = if rows > 0 { value[0].len() } else { 0 }; // Number of columns (assuming all rows have the same number of columns)

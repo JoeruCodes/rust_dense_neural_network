@@ -1,102 +1,131 @@
-use std::{
-    fmt::Debug,
-    ops::{Add, Mul, Sub},
-};
+use std::{ffi::c_int, fmt::Debug};
 
 lazy_static::lazy_static! {
     pub static ref NODE_ID_GENERATOR: NodeIdGenerator = NodeIdGenerator::new();
 }
-use cache::{MatrixResult, NodeIdGenerator};
+use cache::NodeIdGenerator;
+use kernel::cuda_traits::{CudaVectorAdd, SupportedFloat};
 use nodes::Matrix;
 use num_traits::Float;
 
 pub mod cache;
+pub mod kernel;
 pub mod nodes;
 
-fn gpu_add<T: Float + Debug>(a: &Matrix<T>, b: &Matrix<T>) -> Matrix<T> {
-    assert!(
-        a.rows == b.rows && a.cols == b.cols,
-        "Matrix dimensions must agree for addition"
-    );
+pub fn gpu_add<T>(a: &Matrix<T>, b: &Matrix<T>) -> Matrix<T>
+where
+    T: Float + Debug + SupportedFloat + CudaVectorAdd<CType = T>,
+{
+    // Ensure matrices have the same dimensions
+    if a.rows != b.rows || a.cols != b.cols {
+        panic!("Matrix dimensions must agree for addition");
+    }
 
-    let data = a
-        .data
-        .iter()
-        .zip(b.data.iter())
-        .map(|(x, y)| *x + *y)
-        .collect();
+    let num_elements = (a.rows * a.cols) as c_int;
 
-    Matrix::new(data, a.rows, a.cols)
+    // Prepare the output vector
+    let mut c = vec![unsafe { std::mem::zeroed() }; num_elements as usize];
+
+    // Perform the CUDA vector addition
+    let result = unsafe {
+        <T as CudaVectorAdd>::add(
+            a.data.as_ptr(),
+            b.data.as_ptr(),
+            c.as_mut_ptr(),
+            num_elements,
+        )
+    };
+
+    if result != 0 {
+        panic!("CUDA vector_add failed with error code {}", result);
+    }
+
+    Matrix::new(c, a.rows, a.cols)
 }
 
-fn gpu_sub<T: Float + Debug>(a: &Matrix<T>, b: &Matrix<T>) -> Matrix<T> {
+fn gpu_elemental_mul<T: Float + Debug + SupportedFloat + CudaVectorAdd<CType = T>>(
+    a: &Matrix<T>,
+    b: &Matrix<T>,
+) -> Matrix<T> {
     assert!(
         a.rows == b.rows && a.cols == b.cols,
         "Matrix dimensions must agree for addition"
     );
 
-    let data = a
-        .data
-        .iter()
-        .zip(b.data.iter())
-        .map(|(x, y)| *x - *y)
-        .collect();
+    let num_elements = (a.rows * a.cols) as c_int;
 
-    Matrix::new(data, a.rows, a.cols)
-}
+    // Prepare the output vector
+    let mut c = vec![unsafe { std::mem::zeroed() }; num_elements as usize];
 
-fn gpu_elemental_mul<T: Float + Debug>(a: &Matrix<T>, b: &Matrix<T>) -> Matrix<T> {
-    assert!(
-        a.rows == b.rows && a.cols == b.cols,
-        "Matrix dimensions must agree for addition"
-    );
+    // Perform the CUDA vector addition
+    let result = unsafe {
+        <T as CudaVectorAdd>::mul(
+            a.data.as_ptr(),
+            b.data.as_ptr(),
+            c.as_mut_ptr(),
+            num_elements,
+        )
+    };
 
-    let data = a
-        .data
-        .iter()
-        .zip(b.data.iter())
-        .map(|(x, y)| *x * *y)
-        .collect();
+    if result != 0 {
+        panic!("CUDA vector_add failed with error code {}", result);
+    }
 
-    Matrix::new(data, a.rows, a.cols)
+    Matrix::new(c, a.rows, a.cols)
 }
 
 fn gpu_dot<T>(a: &Matrix<T>, b: &Matrix<T>) -> Matrix<T>
 where
-    T: Clone + Float,
+    T: Clone + Float + SupportedFloat + CudaVectorAdd<CType = T>,
 {
     assert!(
         a.cols == b.rows,
         "Matrix dimensions must agree for dot product"
     );
-    let rows_a = a.rows;
-    let cols_a = a.cols; // also rows_b
-    let cols_b = b.cols;
 
-    // Allocate result matrix
-    let mut result_data = vec![T::zero(); rows_a * cols_b];
+    let num_rows = a.rows;
+    let num_cols = b.cols;
+    let inner_dim = a.cols;
 
-    // Perform the dot product
-    for i in 0..rows_a {
-        for j in 0..cols_b {
-            let mut sum = T::zero();
-            for k in 0..cols_a {
-                // Calculate the indices for the flattened vectors
-                let index_a = i * cols_a + k; // Row-major index in matrix `a`
-                let index_b = k * cols_b + j; // Row-major index in matrix `b`
-                sum = sum + a.data[index_a].clone() * b.data[index_b].clone();
+    // Prepare the output vector with zeros
+    let mut c = vec![T::zero(); num_rows * num_cols];
+
+    for i in 0..num_rows {
+        for j in 0..num_cols {
+            // Extract the i-th row from matrix a
+            let row_a = &a.data[i * inner_dim..(i + 1) * inner_dim];
+
+            // Extract the j-th column from matrix b
+            let mut col_b = Vec::with_capacity(inner_dim);
+            for k in 0..inner_dim {
+                col_b.push(b.data[k * num_cols + j]);
             }
-            result_data[i * cols_b + j] = sum; // Store the result in the flattened result matrix
+
+            // Perform the dot product using the CUDA `dot` function
+            let mut result: T = T::zero();
+            let status = unsafe {
+                <T as CudaVectorAdd>::dot(
+                    row_a.as_ptr(),
+                    col_b.as_ptr(),
+                    &mut result as *mut T,
+                    inner_dim as c_int,
+                )
+            };
+
+            if status != 0 {
+                panic!("CUDA vector_dot failed with error code {}", status);
+            }
+
+            c[i * num_cols + j] = result;
         }
     }
 
-    // Construct the result matrix
-    Matrix::new(result_data, rows_a, cols_b)
+    Matrix::new(c, num_rows, num_cols)
 }
 
 fn gpu_reshape<T>(a: &Matrix<T>, dims: (usize, usize)) -> Matrix<T>
 where
-    T: Clone,
+    T: Clone + SupportedFloat + CudaVectorAdd,
 {
     let (new_rows, new_cols) = dims;
 
@@ -112,6 +141,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::ops::{Add, Mul, Sub};
+
     use cache::CacheManager;
     use nodes::Nodes;
 

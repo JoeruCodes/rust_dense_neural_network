@@ -1,10 +1,9 @@
-use ndarray::array;
-use nn::{activation::ActivationTypes, loss::LossType, models::Sequential};
-
 pub mod nn;
 pub mod symbolic;
 #[test]
 fn test() {
+    use ndarray::array;
+    use nn::{activation::ActivationTypes, loss::LossType, models::Sequential};
     println!("=========================== With Optimizer ======================");
     let mut nn = Sequential::new();
 
