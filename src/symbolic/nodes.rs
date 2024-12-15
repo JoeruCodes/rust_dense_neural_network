@@ -81,7 +81,7 @@ where
     Transformation {
         id: NodeId,
         tgt: Box<Nodes<T>>,
-        transformation: fn(T) -> T
+        transformation: fn(T) -> T,
     },
 }
 impl<T> Nodes<T>
@@ -138,7 +138,7 @@ where
             dims,
         }
     }
-    
+
     pub fn new_transformation(tgt: Nodes<T>, transformation: fn(T) -> T) -> Self {
         let id = NODE_ID_GENERATOR.next_id();
         Nodes::Transformation {
@@ -176,9 +176,14 @@ where
                 Some(CacheKey::Reshape(node.get_id(), dims.0, dims.1))
             }
             Nodes::Base { .. } => None,
-            Nodes::Transformation { tgt, transformation, .. } => {
-                Some(CacheKey::Transformation(tgt.get_id(), *transformation as usize))
-            }
+            Nodes::Transformation {
+                tgt,
+                transformation,
+                ..
+            } => Some(CacheKey::Transformation(
+                tgt.get_id(),
+                *transformation as usize,
+            )),
         }
     }
 
@@ -190,7 +195,7 @@ where
             | Nodes::ElementalMul { id, .. }
             | Nodes::Dot { id, .. }
             | Nodes::Reshape { id, .. }
-            | Nodes::Transformation { id, ..} => *id,
+            | Nodes::Transformation { id, .. } => *id,
         }
     }
 
@@ -270,7 +275,11 @@ where
 
                 Some(result)
             }
-            Nodes::Transformation { tgt, transformation, .. } => {
+            Nodes::Transformation {
+                tgt,
+                transformation,
+                ..
+            } => {
                 let cache_key = CacheKey::Transformation(tgt.get_id(), *transformation as usize);
                 if let Some(cached) = cache_manager.get_value(&cache_key) {
                     return Some(cached.clone());
@@ -318,7 +327,8 @@ where
                 }
             }
             Nodes::Reshape { dims, .. } => *dims,
-            Nodes::Transformation { tgt, .. } => { // Handle Transformation
+            Nodes::Transformation { tgt, .. } => {
+                // Handle Transformation
                 let (rows, cols) = tgt.get_shape(cache_manager)?;
                 (rows, cols)
             }

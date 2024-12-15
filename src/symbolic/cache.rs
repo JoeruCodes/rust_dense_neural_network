@@ -33,7 +33,7 @@ pub enum CacheKey {
     ElementalMul(NodeId, NodeId),
     Dot(NodeId, NodeId),
     Reshape(NodeId, usize, usize),
-    Transformation(NodeId, usize)
+    Transformation(NodeId, usize),
 }
 
 pub type MatrixResult<T> = Option<Matrix<T>>;
