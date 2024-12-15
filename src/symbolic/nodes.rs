@@ -78,8 +78,12 @@ where
         node: Box<Nodes<T>>,
         dims: (usize, usize),
     },
+    Transformation {
+        id: NodeId,
+        tgt: Box<Nodes<T>>,
+        transformation: fn(T) -> T
+    },
 }
-
 impl<T> Nodes<T>
 where
     T: Clone + Debug + Float + SupportedFloat + CudaVectorAdd<CType = T>,
@@ -134,6 +138,19 @@ where
             dims,
         }
     }
+    
+    pub fn new_transformation(tgt: Nodes<T>, transformation: fn(T) -> T) -> Self {
+        let id = NODE_ID_GENERATOR.next_id();
+        Nodes::Transformation {
+            id,
+            tgt: Box::new(tgt),
+            transformation,
+        }
+    }
+
+    pub fn transform(self, transformation: fn(T) -> T) -> Self {
+        Nodes::new_transformation(self, transformation)
+    }
 
     pub fn dot(self, other: Self) -> Self {
         Nodes::new_dot(self, other)
@@ -159,6 +176,9 @@ where
                 Some(CacheKey::Reshape(node.get_id(), dims.0, dims.1))
             }
             Nodes::Base { .. } => None,
+            Nodes::Transformation { tgt, transformation, .. } => {
+                Some(CacheKey::Transformation(tgt.get_id(), *transformation as usize))
+            }
         }
     }
 
@@ -169,7 +189,8 @@ where
             | Nodes::Sub { id, .. }
             | Nodes::ElementalMul { id, .. }
             | Nodes::Dot { id, .. }
-            | Nodes::Reshape { id, .. } => *id,
+            | Nodes::Reshape { id, .. }
+            | Nodes::Transformation { id, ..} => *id,
         }
     }
 
@@ -249,6 +270,19 @@ where
 
                 Some(result)
             }
+            Nodes::Transformation { tgt, transformation, .. } => {
+                let cache_key = CacheKey::Transformation(tgt.get_id(), *transformation as usize);
+                if let Some(cached) = cache_manager.get_value(&cache_key) {
+                    return Some(cached.clone());
+                }
+
+                let a = tgt.evaluate(cache_manager)?;
+                let transformed_data: Vec<T> = a.data.iter().map(|&x| transformation(x)).collect();
+                let result = Matrix::new(transformed_data, a.rows, a.cols);
+
+                cache_manager.insert_value(cache_key, result.clone());
+                Some(result)
+            }
         }
     }
 
@@ -284,6 +318,10 @@ where
                 }
             }
             Nodes::Reshape { dims, .. } => *dims,
+            Nodes::Transformation { tgt, .. } => { // Handle Transformation
+                let (rows, cols) = tgt.get_shape(cache_manager)?;
+                (rows, cols)
+            }
         };
 
         cache_manager.insert_shape(self.get_id(), shape);
@@ -355,6 +393,18 @@ impl<T: PartialEq + SupportedFloat + CudaVectorAdd> PartialEq for Nodes<T> {
                     ..
                 },
             ) => a == b && dims_a == dims_b,
+            (
+                Nodes::Transformation {
+                    tgt: a,
+                    transformation: f1,
+                    ..
+                },
+                Nodes::Transformation {
+                    tgt: b,
+                    transformation: f2,
+                    ..
+                },
+            ) => a == b && (*f1 as usize) == (*f2 as usize),
             _ => false,
         }
     }
@@ -405,7 +455,7 @@ where
 impl<T: SupportedFloat + CudaVectorAdd<CType = T>> From<Vec<Vec<T>>> for Matrix<T> {
     fn from(value: Vec<Vec<T>>) -> Self {
         let rows = value.len();
-        let cols = if rows > 0 { value[0].len() } else { 0 }; // Number of columns (assuming all rows have the same number of columns)
+        let cols = if rows > 0 { value[0].len() } else { 0 };
         Self::new(value.into_iter().flatten().collect(), rows, cols)
     }
 }

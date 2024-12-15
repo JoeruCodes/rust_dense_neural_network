@@ -483,4 +483,98 @@ mod tests {
 
         println!("All shape tests passed, and caching is verified.");
     }
+    #[test]
+    fn test_matrix_transformation() {
+        let mut cache_manager = CacheManager::<f64>::new();
+
+        // Define a matrix
+        let matrix = vec![vec![1.0, 2.0], vec![3.0, 4.0]];
+
+        // Create a base node
+        let node = Nodes::new_base(matrix.into());
+
+        // Define a transformation function (e.g., square each element)
+        fn square(x: f64) -> f64 {
+            x * x
+        }
+
+        // Apply the transformation
+        let ast_transform = node.clone().transform(square);
+
+        // Optimize AST
+        let optimized_ast_transform = ast_transform.optimize_ast();
+
+        // Evaluate AST
+        let result = optimized_ast_transform
+            .evaluate(&mut cache_manager)
+            .expect("Transformation failed");
+
+        // Expected result: [[1, 4], [9, 16]]
+        let expected = vec![vec![1.0, 4.0], vec![9.0, 16.0]];
+
+        assert_eq!(
+            result,
+            expected.into(),
+            "Matrix transformation did not produce expected results"
+        );
+
+        // Check that the cache has 1 entry
+        assert_eq!(
+            cache_manager.len(),
+            1,
+            "Cache does not contain expected number of entries"
+        );
+    }
+
+    #[test]
+    fn test_multiple_transformations_with_caching() {
+        let mut cache_manager = CacheManager::<f64>::new();
+
+        // Define a matrix
+        let matrix = vec![vec![1.0, 2.0], vec![3.0, 4.0]];
+
+        // Create a base node
+        let node = Nodes::new_base(matrix.into());
+
+        // Define transformation functions
+        fn add_one(x: f64) -> f64 {
+            x + 1.0
+        }
+
+        fn multiply_two(x: f64) -> f64 {
+            x * 2.0
+        }
+
+        // Apply transformations
+        let ast_transform1 = node.clone().transform(add_one);
+        let ast_transform2 = ast_transform1.clone().transform(multiply_two);
+
+        // Optimize AST
+        let optimized_ast = ast_transform2.optimize_ast();
+
+        // Evaluate AST
+        let result = optimized_ast
+            .evaluate(&mut cache_manager)
+            .expect("Multiple transformations failed");
+
+        // Expected result:
+        // Step 1: [[2, 3], [4, 5]]
+        // Step 2: [[4, 6], [8, 10]]
+        let expected = vec![vec![4.0, 6.0], vec![8.0, 10.0]];
+
+        assert_eq!(
+            result,
+            expected.into(),
+            "Multiple transformations did not produce expected results"
+        );
+
+        // Check that the cache has 2 entries:
+        // 1. add_one
+        // 2. multiply_two applied to add_one
+        assert_eq!(
+            cache_manager.len(),
+            2,
+            "Cache does not contain expected number of entries"
+        );
+    }
 }
