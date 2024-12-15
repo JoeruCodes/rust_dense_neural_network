@@ -3,6 +3,8 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+use super::nodes::Matrix;
+
 pub type NodeId = u64;
 
 pub struct NodeIdGenerator {
@@ -21,7 +23,6 @@ impl NodeIdGenerator {
     }
 }
 
-pub type Matrix<T> = Vec<Vec<T>>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CacheKey {

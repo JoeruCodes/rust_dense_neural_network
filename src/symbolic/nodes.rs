@@ -8,9 +8,21 @@ use num_traits::Float;
 
 use super::{
     cache::{CacheKey, CacheManager, NodeId},
-    gpu_add, gpu_dot, gpu_elemental_mul, gpu_reshape, gpu_sub, Matrix, NODE_ID_GENERATOR,
+    gpu_add, gpu_dot, gpu_elemental_mul, gpu_reshape, gpu_sub, NODE_ID_GENERATOR,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Matrix<T>{
+    pub data: Vec<T>,
+    pub rows: usize,
+    pub cols: usize
+}
+
+impl<T> Matrix<T>{
+    pub fn new(data: Vec<T>, rows: usize, cols: usize) -> Self{
+        Matrix { data, rows, cols }
+    }
+}
 #[derive(Debug, Clone)]
 pub enum Nodes<T> {
     Base {
@@ -152,7 +164,7 @@ where
 
                 let a = left.evaluate(cache_manager)?;
                 let b = right.evaluate(cache_manager)?;
-                let result = gpu_add(&a, &b)?;
+                let result = gpu_add(&a, &b);
 
                 cache_manager.insert_value(cache_key, result.clone());
 
@@ -166,7 +178,7 @@ where
 
                 let a = left.evaluate(cache_manager)?;
                 let b = right.evaluate(cache_manager)?;
-                let result = gpu_sub(&a, &b)?;
+                let result = gpu_sub(&a, &b);
 
                 cache_manager.insert_value(cache_key, result.clone());
 
@@ -180,7 +192,7 @@ where
 
                 let a = left.evaluate(cache_manager)?;
                 let b = right.evaluate(cache_manager)?;
-                let result = gpu_elemental_mul(&a, &b)?;
+                let result = gpu_elemental_mul(&a, &b);
 
                 cache_manager.insert_value(cache_key, result.clone());
 
@@ -194,7 +206,7 @@ where
 
                 let a = left.evaluate(cache_manager)?;
                 let b = right.evaluate(cache_manager)?;
-                let result = gpu_dot(&a, &b)?;
+                let result = gpu_dot(&a, &b);
 
                 cache_manager.insert_value(cache_key, result.clone());
 
@@ -207,7 +219,7 @@ where
                 }
 
                 let a = node.evaluate(cache_manager)?;
-                let result = gpu_reshape(&a, *dims)?;
+                let result = gpu_reshape(&a, *dims);
 
                 cache_manager.insert_value(cache_key, result.clone());
 
@@ -227,8 +239,8 @@ where
         // Compute shape based on node type
         let shape = match self {
             Nodes::Base { matrix, .. } => {
-                let rows = matrix.len();
-                let cols = if rows > 0 { matrix[0].len() } else { 0 };
+                let rows = matrix.rows;
+                let cols = if rows > 0 { matrix.cols } else { 0 };
                 (rows, cols)
             }
             Nodes::Add { left, right, .. }
@@ -252,7 +264,7 @@ where
                     return None; // dimension mismatch
                 }
             }
-            Nodes::Reshape { dims, node, .. } => {
+            Nodes::Reshape { dims, .. } => {
                 // For reshape, we trust that dims is correct.
                 *dims
             }
@@ -370,7 +382,15 @@ where
     T: Clone + Debug + Float,
 {
     fn from(value: Array2<T>) -> Self {
-        let arr = value.rows().into_iter().map(|row| row.to_vec()).collect();
-        Nodes::new_base(arr)
+        let arr: Vec<Vec<T>> = value.rows().into_iter().map(|row| row.to_vec()).collect();
+        Nodes::new_base(arr.into())
+    }
+}
+
+impl<T> From<Vec<Vec<T>>> for Matrix<T>{
+    fn from(value: Vec<Vec<T>>) -> Self {
+        let rows = value.len();
+        let cols = if rows > 0 { value[0].len() } else { 0 }; // Number of columns (assuming all rows have the same number of columns)
+        Self::new(value.into_iter().flatten().collect(), rows, cols)
     }
 }

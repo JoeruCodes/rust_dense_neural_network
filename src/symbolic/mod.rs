@@ -1,120 +1,110 @@
-use std::ops::{Add, Mul, Sub};
+use std::{fmt::Debug, ops::{Add, Mul, Sub}};
 
 lazy_static::lazy_static! {
     pub static ref NODE_ID_GENERATOR: NodeIdGenerator = NodeIdGenerator::new();
 }
-use cache::{Matrix, MatrixResult, NodeIdGenerator};
+use cache::{MatrixResult, NodeIdGenerator};
+use nodes::Matrix;
 use num_traits::Float;
 
 pub mod cache;
 pub mod nodes;
 
-// GPU operation stubs
-fn gpu_add<T>(a: &Matrix<T>, b: &Matrix<T>) -> MatrixResult<T>
-where
-    T: Clone + Add<Output = T>,
-{
-    if a.len() != b.len() || a.is_empty() || b.is_empty() || a[0].len() != b[0].len() {
-        return None; // Dimension mismatch
-    }
+fn gpu_add<T: Float + Debug>(a: &Matrix<T>, b: &Matrix<T>) -> Matrix<T> {
+    assert!(
+        a.rows == b.rows && a.cols == b.cols,
+        "Matrix dimensions must agree for addition"
+    );
 
-    Some(
-        a.iter()
-            .zip(b.iter())
-            .map(|(row_a, row_b)| {
-                row_a
-                    .iter()
-                    .zip(row_b.iter())
-                    .map(|(x, y)| x.clone() + y.clone())
-                    .collect()
-            })
-            .collect(),
-    )
+    let data = a
+        .data
+        .iter()
+        .zip(b.data.iter())
+        .map(|(x, y)| *x + *y)
+        .collect();
+
+    Matrix::new(data, a.rows, a.cols)
 }
 
-fn gpu_sub<T>(a: &Matrix<T>, b: &Matrix<T>) -> MatrixResult<T>
-where
-    T: Clone + Sub<Output = T>,
+fn gpu_sub<T: Float + Debug>(a: &Matrix<T>, b: &Matrix<T>) -> Matrix<T>
 {
-    if a.len() != b.len() || a.is_empty() || b.is_empty() || a[0].len() != b[0].len() {
-        return None; // Dimension mismatch
-    }
+    assert!(
+        a.rows == b.rows && a.cols == b.cols,
+        "Matrix dimensions must agree for addition"
+    );
 
-    Some(
-        a.iter()
-            .zip(b.iter())
-            .map(|(row_a, row_b)| {
-                row_a
-                    .iter()
-                    .zip(row_b.iter())
-                    .map(|(x, y)| x.clone() - y.clone())
-                    .collect()
-            })
-            .collect(),
-    )
+    let data = a
+        .data
+        .iter()
+        .zip(b.data.iter())
+        .map(|(x, y)| *x - *y)
+        .collect();
+
+    Matrix::new(data, a.rows, a.cols)
 }
 
-fn gpu_elemental_mul<T>(a: &Matrix<T>, b: &Matrix<T>) -> MatrixResult<T>
-where
-    T: Clone + Mul<Output = T>,
+fn gpu_elemental_mul<T: Float + Debug>(a: &Matrix<T>, b: &Matrix<T>) -> Matrix<T>
 {
-    if a.len() != b.len() || a.is_empty() || b.is_empty() || a[0].len() != b[0].len() {
-        return None; // Dimension mismatch
-    }
+    assert!(
+        a.rows == b.rows && a.cols == b.cols,
+        "Matrix dimensions must agree for addition"
+    );
 
-    Some(
-        a.iter()
-            .zip(b.iter())
-            .map(|(row_a, row_b)| {
-                row_a
-                    .iter()
-                    .zip(row_b.iter())
-                    .map(|(x, y)| x.clone() * y.clone())
-                    .collect()
-            })
-            .collect(),
-    )
+    let data = a
+        .data
+        .iter()
+        .zip(b.data.iter())
+        .map(|(x, y)| *x * *y)
+        .collect();
+
+    Matrix::new(data, a.rows, a.cols)
 }
 
-fn gpu_dot<T>(a: &Matrix<T>, b: &Matrix<T>) -> MatrixResult<T>
+fn gpu_dot<T>(a: &Matrix<T>, b: &Matrix<T>) -> Matrix<T>
 where
     T: Clone + Float,
 {
-    let rows_a = a.len();
-    let cols_a = if rows_a > 0 { a[0].len() } else { 0 };
-    let cols_b = if b.len() > 0 { b[0].len() } else { 0 };
 
-    if cols_a != b.len() {
-        return None; // Dimension mismatch
-    }
+    assert!(a.cols == b.rows, "Matrix dimensions must agree for dot product");
+    let rows_a = a.rows;
+    let cols_a = a.cols; // also rows_b
+    let cols_b = b.cols;
 
-    let mut result = vec![vec![T::zero(); cols_b]; rows_a];
+    // Allocate result matrix
+    let mut result_data = vec![T::zero(); rows_a * cols_b];
 
+    // Perform the dot product
     for i in 0..rows_a {
         for j in 0..cols_b {
-            let mut sum = a[i][0].clone() * b[0][j].clone();
-            for k in 1..cols_a {
-                sum = sum + (a[i][k].clone() * b[k][j].clone());
+            let mut sum = T::zero();
+            for k in 0..cols_a {
+                // Calculate the indices for the flattened vectors
+                let index_a = i * cols_a + k; // Row-major index in matrix `a`
+                let index_b = k * cols_b + j; // Row-major index in matrix `b`
+                sum = sum + a.data[index_a].clone() * b.data[index_b].clone();
             }
-            result[i][j] = sum;
+            result_data[i * cols_b + j] = sum; // Store the result in the flattened result matrix
         }
     }
 
-    Some(result)
+    // Construct the result matrix
+    Matrix::new(result_data, rows_a, cols_b)
 }
 
-fn gpu_reshape<T>(a: &Matrix<T>, dims: (usize, usize)) -> MatrixResult<T>
+fn gpu_reshape<T>(a: &Matrix<T>, dims: (usize, usize)) -> Matrix<T>
 where
     T: Clone,
 {
     let (new_rows, new_cols) = dims;
-    let flat: Vec<T> = a.iter().flat_map(|row| row.iter().cloned()).collect();
 
-    if flat.len() != new_rows * new_cols {
-        return None; // Dimension mismatch
-    }
+    // Correct assertion: ensure lengths are equal
+    assert!(
+        a.data.len() == new_rows * new_cols,
+        "Matrix dimensions must agree for reshape"
+    );
 
-    Some(flat.chunks(new_cols).map(|chunk| chunk.to_vec()).collect())
+    // The data remains the same; only the shape changes
+    Matrix::new(a.data.clone(), new_rows, new_cols)
 }
 
 #[cfg(test)]
@@ -134,8 +124,8 @@ mod tests {
         let matrix_b = vec![vec![5.0, 6.0], vec![7.0, 8.0]];
 
         // Create base nodes
-        let node_a = Nodes::new_base(matrix_a);
-        let node_b = Nodes::new_base(matrix_b);
+        let node_a = Nodes::new_base(matrix_a.into());
+        let node_b = Nodes::new_base(matrix_b.into());
 
         // Build AST: A + B
         let ast_add = node_a.clone().add(node_b.clone());
@@ -152,7 +142,7 @@ mod tests {
         let expected = vec![vec![6.0, 8.0], vec![10.0, 12.0]];
 
         assert_eq!(
-            result, expected,
+            result, expected.into(),
             "Matrix addition did not produce expected results"
         );
 
@@ -174,8 +164,8 @@ mod tests {
         let matrix_b = vec![vec![5.0, 6.0], vec![7.0, 8.0]];
 
         // Create base nodes
-        let node_a = Nodes::new_base(matrix_a);
-        let node_b = Nodes::new_base(matrix_b);
+        let node_a = Nodes::new_base(matrix_a.into());
+        let node_b = Nodes::new_base(matrix_b.into());
 
         // Build AST: A - B
         let ast_sub = node_a.clone().sub(node_b.clone());
@@ -192,7 +182,7 @@ mod tests {
         let expected = vec![vec![5.0, 14.0], vec![23.0, 32.0]];
 
         assert_eq!(
-            result, expected,
+            result, expected.into(),
             "Matrix subtraction did not produce expected results"
         );
 
@@ -214,8 +204,8 @@ mod tests {
         let matrix_b = vec![vec![5.0, 6.0], vec![7.0, 8.0]];
 
         // Create base nodes
-        let node_a = Nodes::new_base(matrix_a);
-        let node_b = Nodes::new_base(matrix_b);
+        let node_a = Nodes::new_base(matrix_a.into());
+        let node_b = Nodes::new_base(matrix_b.into());
 
         // Build AST: (A + B) * (A + B)
         let ast_add = node_a.clone().add(node_b.clone());
@@ -238,7 +228,7 @@ mod tests {
         let expected = vec![vec![36.0, 64.0], vec![100.0, 144.0]];
 
         assert_eq!(
-            result, expected,
+            result, expected.into(),
             "Matrix multiplication did not produce expected results"
         );
 
@@ -262,8 +252,8 @@ mod tests {
         let matrix_b = vec![vec![7.0, 8.0], vec![9.0, 10.0], vec![11.0, 12.0]];
 
         // Create base nodes
-        let node_a = Nodes::new_base(matrix_a);
-        let node_b = Nodes::new_base(matrix_b);
+        let node_a = Nodes::new_base(matrix_a.into());
+        let node_b = Nodes::new_base(matrix_b.into());
 
         // Build AST: A dot B
         let ast_dot = node_a.clone().dot(node_b.clone());
@@ -289,7 +279,7 @@ mod tests {
         let expected = vec![vec![58.0, 64.0], vec![139.0, 154.0]];
 
         assert_eq!(
-            result, expected,
+            result, expected.into(),
             "Matrix dot product did not produce expected results"
         );
 
@@ -309,7 +299,7 @@ mod tests {
         let matrix = vec![vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0]];
 
         // Create a base node
-        let node = Nodes::new_base(matrix);
+        let node = Nodes::new_base(matrix.into());
 
         // Build AST: Reshape to (3, 2)
         let ast_reshape = node.clone().reshape((3, 2));
@@ -326,7 +316,7 @@ mod tests {
         let expected = vec![vec![1.0, 2.0], vec![3.0, 4.0], vec![5.0, 6.0]];
 
         assert_eq!(
-            result, expected,
+            result, expected.into(),
             "Matrix reshape did not produce expected results"
         );
 
@@ -350,9 +340,9 @@ mod tests {
         let matrix_c = vec![vec![9.0, 10.0], vec![11.0, 12.0]];
 
         // Create base nodes
-        let node_a = Nodes::new_base(matrix_a);
-        let node_b = Nodes::new_base(matrix_b);
-        let node_c = Nodes::new_base(matrix_c);
+        let node_a = Nodes::new_base(matrix_a.into());
+        let node_b = Nodes::new_base(matrix_b.into());
+        let node_c = Nodes::new_base(matrix_c.into());
 
         // Build AST: (A + B) * (A + B) + C
         let ast_add = node_a.clone().add(node_b.clone());
@@ -375,7 +365,7 @@ mod tests {
         let expected = vec![vec![45.0, 74.0], vec![111.0, 156.0]];
 
         assert_eq!(
-            result, expected,
+            result, expected.into(),
             "Complex AST evaluation did not produce expected results"
         );
 
@@ -396,7 +386,7 @@ mod tests {
 
         // Base node
         let matrix_base = vec![vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0]];
-        let node_base = Nodes::new_base(matrix_base.clone());
+        let node_base = Nodes::new_base(matrix_base.into());
         let shape_base = node_base
             .get_shape(&mut cache_manager)
             .expect("Failed to get shape for base node");
@@ -407,8 +397,8 @@ mod tests {
         // Add node (same shape as its operands)
         let matrix_a = vec![vec![1.0, 2.0], vec![3.0, 4.0]];
         let matrix_b = vec![vec![5.0, 6.0], vec![7.0, 8.0]];
-        let node_a = Nodes::new_base(matrix_a);
-        let node_b = Nodes::new_base(matrix_b);
+        let node_a = Nodes::new_base(matrix_a.into());
+        let node_b = Nodes::new_base(matrix_b.into());
         let node_add = node_a.clone() + node_b.clone();
 
         // Compute shape once
@@ -428,8 +418,8 @@ mod tests {
         // Dot node
         let matrix_c = vec![vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0]];
         let matrix_d = vec![vec![7.0, 8.0], vec![9.0, 10.0], vec![11.0, 12.0]];
-        let node_c = Nodes::new_base(matrix_c);
-        let node_d = Nodes::new_base(matrix_d);
+        let node_c = Nodes::new_base(matrix_c.into());
+        let node_d = Nodes::new_base(matrix_d.into());
         let node_dot = node_c.dot(node_d);
 
         let shape_dot = node_dot
