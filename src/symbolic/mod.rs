@@ -1,4 +1,7 @@
-use std::{fmt::Debug, ops::{Add, Mul, Sub}};
+use std::{
+    fmt::Debug,
+    ops::{Add, Mul, Sub},
+};
 
 lazy_static::lazy_static! {
     pub static ref NODE_ID_GENERATOR: NodeIdGenerator = NodeIdGenerator::new();
@@ -26,8 +29,7 @@ fn gpu_add<T: Float + Debug>(a: &Matrix<T>, b: &Matrix<T>) -> Matrix<T> {
     Matrix::new(data, a.rows, a.cols)
 }
 
-fn gpu_sub<T: Float + Debug>(a: &Matrix<T>, b: &Matrix<T>) -> Matrix<T>
-{
+fn gpu_sub<T: Float + Debug>(a: &Matrix<T>, b: &Matrix<T>) -> Matrix<T> {
     assert!(
         a.rows == b.rows && a.cols == b.cols,
         "Matrix dimensions must agree for addition"
@@ -43,8 +45,7 @@ fn gpu_sub<T: Float + Debug>(a: &Matrix<T>, b: &Matrix<T>) -> Matrix<T>
     Matrix::new(data, a.rows, a.cols)
 }
 
-fn gpu_elemental_mul<T: Float + Debug>(a: &Matrix<T>, b: &Matrix<T>) -> Matrix<T>
-{
+fn gpu_elemental_mul<T: Float + Debug>(a: &Matrix<T>, b: &Matrix<T>) -> Matrix<T> {
     assert!(
         a.rows == b.rows && a.cols == b.cols,
         "Matrix dimensions must agree for addition"
@@ -64,8 +65,10 @@ fn gpu_dot<T>(a: &Matrix<T>, b: &Matrix<T>) -> Matrix<T>
 where
     T: Clone + Float,
 {
-
-    assert!(a.cols == b.rows, "Matrix dimensions must agree for dot product");
+    assert!(
+        a.cols == b.rows,
+        "Matrix dimensions must agree for dot product"
+    );
     let rows_a = a.rows;
     let cols_a = a.cols; // also rows_b
     let cols_b = b.cols;
@@ -142,7 +145,8 @@ mod tests {
         let expected = vec![vec![6.0, 8.0], vec![10.0, 12.0]];
 
         assert_eq!(
-            result, expected.into(),
+            result,
+            expected.into(),
             "Matrix addition did not produce expected results"
         );
 
@@ -182,7 +186,8 @@ mod tests {
         let expected = vec![vec![5.0, 14.0], vec![23.0, 32.0]];
 
         assert_eq!(
-            result, expected.into(),
+            result,
+            expected.into(),
             "Matrix subtraction did not produce expected results"
         );
 
@@ -228,7 +233,8 @@ mod tests {
         let expected = vec![vec![36.0, 64.0], vec![100.0, 144.0]];
 
         assert_eq!(
-            result, expected.into(),
+            result,
+            expected.into(),
             "Matrix multiplication did not produce expected results"
         );
 
@@ -279,7 +285,8 @@ mod tests {
         let expected = vec![vec![58.0, 64.0], vec![139.0, 154.0]];
 
         assert_eq!(
-            result, expected.into(),
+            result,
+            expected.into(),
             "Matrix dot product did not produce expected results"
         );
 
@@ -316,7 +323,8 @@ mod tests {
         let expected = vec![vec![1.0, 2.0], vec![3.0, 4.0], vec![5.0, 6.0]];
 
         assert_eq!(
-            result, expected.into(),
+            result,
+            expected.into(),
             "Matrix reshape did not produce expected results"
         );
 
@@ -365,7 +373,8 @@ mod tests {
         let expected = vec![vec![45.0, 74.0], vec![111.0, 156.0]];
 
         assert_eq!(
-            result, expected.into(),
+            result,
+            expected.into(),
             "Complex AST evaluation did not produce expected results"
         );
 

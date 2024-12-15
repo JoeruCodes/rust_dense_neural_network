@@ -12,14 +12,14 @@ use super::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Matrix<T>{
+pub struct Matrix<T> {
     pub data: Vec<T>,
     pub rows: usize,
-    pub cols: usize
+    pub cols: usize,
 }
 
-impl<T> Matrix<T>{
-    pub fn new(data: Vec<T>, rows: usize, cols: usize) -> Self{
+impl<T> Matrix<T> {
+    pub fn new(data: Vec<T>, rows: usize, cols: usize) -> Self {
         Matrix { data, rows, cols }
     }
 }
@@ -387,7 +387,7 @@ where
     }
 }
 
-impl<T> From<Vec<Vec<T>>> for Matrix<T>{
+impl<T> From<Vec<Vec<T>>> for Matrix<T> {
     fn from(value: Vec<Vec<T>>) -> Self {
         let rows = value.len();
         let cols = if rows > 0 { value[0].len() } else { 0 }; // Number of columns (assuming all rows have the same number of columns)

@@ -23,7 +23,6 @@ impl NodeIdGenerator {
     }
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CacheKey {
     Add(NodeId, NodeId),
